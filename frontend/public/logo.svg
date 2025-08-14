@@ -1,0 +1,11 @@
+<svg width="48" height="48" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="45" stroke="url(#logo-gradient)" stroke-width="8"/>
+    <path d="M30 50C30 43.3726 35.3726 38 42 38C48.6274 38 54 43.3726 54 50C54 56.6274 48.6274 62 42 62" stroke="url(#logo-gradient)" stroke-width="7" stroke-linecap="round"/>
+    <path d="M58 50C58 46.6863 60.6863 44 64 44C67.3137 44 70 46.6863 70 50C70 53.3137 67.3137 56 64 56" stroke="url(#logo-gradient)" stroke-width="7" stroke-linecap="round"/>
+    <defs>
+        <linearGradient id="logo-gradient" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#06b6d4"/>
+            <stop offset="1" stop-color="#3b82f6"/>
+        </linearGradient>
+    </defs>
+</svg>
