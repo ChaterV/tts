@@ -20,9 +20,16 @@ function App() {
         error,
         audioUrl,
         handleSubmit,
+        role,
+        setRole,
+        styleDegree,
+        setStyleDegree,
+        isDialogueMode,
+        setIsDialogueMode,
+        dialogue,
+        setDialogue
     } = useAudioGenerator();
 
-    // SEO: Dynamically set page title and description
     const pageTitle = audioUrl ? `音频已生成 - ${text.substring(0, 20)}...` : "言之有声 - 智能文本转语音工具";
     const pageDescription = text ? `将文本 “${text.substring(0, 100)}...” 转换为自然流畅的语音。` : "言之有声是一款免费的在线文本转语音（TTS）工具，提供多种自然发音人选择和语音风格调整，轻松将您的文字转换成高质量音频。";
 
@@ -46,6 +53,14 @@ function App() {
                         setPitch={setPitch}
                         voiceStyle={voiceStyle}
                         setVoiceStyle={setVoiceStyle}
+                        role={role}
+                        setRole={setRole}
+                        styleDegree={styleDegree}
+                        setStyleDegree={setStyleDegree}
+                        isDialogueMode={isDialogueMode}
+                        setIsDialogueMode={setIsDialogueMode}
+                        dialogue={dialogue}
+                        setDialogue={setDialogue}
                         isLoading={isLoading}
                         handleSubmit={handleSubmit}
                     />

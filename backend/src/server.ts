@@ -1,4 +1,4 @@
-// src/server.ts
+// tts/backend/src/server.ts
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
@@ -16,12 +16,27 @@ interface TokenInfo {
     expiredAt: number | null;
 }
 
+// 对话行结构包含所有参数
+interface DialogueLine {
+    text: string;
+    voice: string;
+    role: string;
+    style: string;
+    speed: string; // 新增
+    pitch: string; // 新增
+    styleDegree: string; // 新增
+}
+
+// 请求体结构保持不变
 interface SpeechRequestBody {
-    input: string;
+    input?: string;
+    dialogue?: DialogueLine[];
     voice?: string;
     speed?: string;
     pitch?: string;
     style?: string;
+    role?: string;
+    styleDegree?: number;
 }
 
 
@@ -39,6 +54,10 @@ let tokenInfo: TokenInfo = {
 // --- 中间件 ---
 app.use(cors());
 app.use(express.json());
+
+const atob = (b64: string): string => Buffer.from(b64, 'base64').toString('binary');
+const btoa = (str: string): string => Buffer.from(str, 'binary').toString('base64');
+
 
 async function base64ToBytes(base64: string) {
     const binaryString = atob(base64);
@@ -94,7 +113,6 @@ async function getEndpoint() {
         return tokenInfo.endpoint;
     }
 
-    // 获取新token
     const endpointUrl = "https://dev.microsofttranslator.com/apps/endpoint?api-version=1.0";
     const clientId = crypto.randomUUID().replace(/-/g, "");
 
@@ -133,7 +151,6 @@ async function getEndpoint() {
 
     } catch (error) {
         console.error("获取endpoint失败:", error);
-        // 如果有缓存的token，即使过期也尝试使用
         if (tokenInfo.token) {
             console.log("使用过期的缓存token");
             return tokenInfo.endpoint;
@@ -141,24 +158,61 @@ async function getEndpoint() {
         throw error;
     }
 }
-// --- 核心函数 (与 JS 版本类似，但增加了类型) ---
 
-function getSsml(text: string, voiceName: string, rate: string, pitch: string, volume: string, style: string, slien: number = 0): string {
-    // ... (函数体与之前相同)
-    let slien_str = slien > 0 ? `<break time="${slien}ms" />` : '';
-    return `<speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" version="1.0" xml:lang="zh-CN"><voice name="${voiceName}"><mstts:express-as style="${style}" styledegree="2.0" role="default"><prosody rate="${rate}" pitch="${pitch}" volume="${volume}">${text}</prosody></mstts:express-as>${slien_str}</voice></speak>`;
+
+/**
+ * (普通模式) 根据参数生成单段文本的SSML
+ */
+function getSsml(text: string, voiceName: string, rate: string, pitch: string, volume: string, style: string, role: string, styleDegree: number): string {
+    const roleAttribute = role ? ` role="${role}"` : '';
+    const styleDegreeAttribute = styleDegree ? ` styledegree="${styleDegree}"` : '';
+    const finalStyle = role ? 'general' : style;
+
+    return `<speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" version="1.0" xml:lang="zh-CN"><voice name="${voiceName}"><mstts:express-as style="${finalStyle}"${roleAttribute}${styleDegreeAttribute}><prosody rate="${rate}" pitch="${pitch}" volume="${volume}">${text}</prosody></mstts:express-as></voice></speak>`;
 }
 
-async function getAudioChunk(text: string, voiceName: string, rate: string, pitch: string, volume: string, style: string, outputFormat: string = 'audio-24khz-48kbitrate-mono-mp3'): Promise<Buffer> {
+/**
+ * (对话模式) 根据对话列表生成完整的SSML
+ */
+function getDialogueSsml(dialogue: DialogueLine[]): string {
+    const body = dialogue.map(line => {
+        if (!line.text.trim()) return '';
+
+        // 为每一行独立计算参数
+        const rate = `${Math.round((parseFloat(line.speed) - 1.0) * 100)}%`;
+        const finalPitch = `${parseInt(line.pitch) >= 0 ? '+' : ''}${parseInt(line.pitch)}Hz`;
+        const styleDegree = parseFloat(line.styleDegree);
+
+        const roleAttribute = line.role ? ` role="${line.role}"` : '';
+        const styleDegreeAttribute = styleDegree ? ` styledegree="${styleDegree}"` : '';
+        const finalStyle = line.role ? 'general' : (line.style || 'general');
+
+        const sanitizedText = `<![CDATA[${line.text}]]>`;
+
+        // 将 prosody 标签包裹在 express-as 内部
+        return `<voice name="${line.voice}">
+                    <mstts:express-as style="${finalStyle}"${roleAttribute}${styleDegreeAttribute}>
+                        <prosody rate="${rate}" pitch="${finalPitch}" volume="+0%">
+                            ${sanitizedText}
+                        </prosody>
+                    </mstts:express-as>
+                </voice>`;
+    }).join('\n');
+
+    return `<speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" version="1.0" xml:lang="zh-CN">${body}</speak>`;
+}
+
+
+/**
+ * 请求微软API，直接从SSML合成音频
+ */
+async function getAudioFromSsml(ssml: string, outputFormat: string = 'audio-24khz-48kbitrate-mono-mp3'): Promise<Buffer> {
     const endpoint = await getEndpoint();
-    const url = `https://${endpoint.r}.tts.speech.microsoft.com/cognitiveservices/v1`;
-    // ... (函数体与之前相同, response.buffer() 返回 Promise<Buffer>)
-    let m = text.match(/\[(\d+)\]\s*?$/);
-    let slien = 0;
-    if (m && m.length == 2) {
-        slien = parseInt(m[1]);
-        text = text.replace(m[0], '');
+    if (!endpoint) {
+        throw new Error("无法获取有效的 endpoint。");
     }
+    const url = `https://${endpoint.r}.tts.speech.microsoft.com/cognitiveservices/v1`;
+
     const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -167,34 +221,15 @@ async function getAudioChunk(text: string, voiceName: string, rate: string, pitc
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
             "X-Microsoft-OutputFormat": outputFormat
         },
-        body: getSsml(text, voiceName, rate, pitch, volume, style, slien)
+        body: ssml
     });
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Edge TTS API error: ${response.status} ${errorText}`);
+        throw new Error(`Edge TTS API error: ${response.status} - ${errorText}`);
     }
     return response.buffer();
 }
-
-
-async function getVoice(text: string, voiceName: string, rate: string, pitch: string, volume: string, style: string, outputFormat: string): Promise<Buffer> {
-    const chunks = text.trim().split("\n");
-    const audioChunks: Buffer[] = [];
-    for (const chunk of chunks) {
-        const audio_chunk = await getAudioChunk(chunk, voiceName, rate, pitch, volume, style, outputFormat);
-        audioChunks.push(audio_chunk);
-    }
-    return Buffer.concat(audioChunks);
-}
-
-
-// --- 身份验证函数 (与之前相同，TS 会自动推断大部分类型) ---
-
-// atob 在 Node.js 中不存在，需要用 Buffer 实现
-const atob = (b64: string): string => Buffer.from(b64, 'base64').toString('binary');
-// ... 其他 sign, getEndpoint 等函数与之前 JS 版本基本一致 ...
-// (为了简洁，这里省略，您可以直接复用上一版回答中的代码)
 
 
 // --- Express 路由 ---
@@ -202,34 +237,45 @@ app.post('/v1/audio/speech', async (req: Request<{}, {}, SpeechRequestBody>, res
     try {
         const {
             input,
+            dialogue,
             voice = "zh-CN-XiaoxiaoNeural",
             speed = '1.0',
             pitch = '0',
-            style = "general"
+            style = "general",
+            role = "",
+            styleDegree = 1,
         } = req.body;
 
-        if (!input) {
-            return res.status(400).json({ error: { message: "Input text is required." } });
+        let audioBuffer: Buffer;
+
+        // 优先处理对话模式
+        if (dialogue && dialogue.length > 0) {
+            console.log("进入对话模式合成...");
+            const ssml = getDialogueSsml(dialogue);
+            audioBuffer = await getAudioFromSsml(ssml);
+
+            // 处理单文本输入模式
+        } else if (input) {
+            const trimmedInput = input.trim();
+            if (trimmedInput.startsWith('<speak') && trimmedInput.endsWith('</speak>')) {
+                console.log("检测到 SSML 输入，进入高级模式。");
+                audioBuffer = await getAudioFromSsml(trimmedInput);
+            } else {
+                console.log("进入普通模式合成...");
+                const rate = `${Math.round((parseFloat(speed) - 1.0) * 100)}%`;
+                const finalPitch = `${parseInt(pitch) >= 0 ? '+' : ''}${parseInt(pitch)}Hz`;
+                const ssml = getSsml(input, voice, rate, finalPitch, '+0%', style, role, styleDegree);
+                audioBuffer = await getAudioFromSsml(ssml);
+            }
+        } else {
+            return res.status(400).json({ error: { message: "Input or dialogue is required." } });
         }
-
-        const rate = `${Math.round((parseFloat(speed) - 1.0) * 100)}%`;
-        const finalPitch = `${parseInt(pitch) >= 0 ? '+' : ''}${parseInt(pitch)}Hz`;
-
-        const audioBuffer = await getVoice(
-            input,
-            voice,
-            rate,
-            finalPitch,
-            '+0%',
-            style,
-            "audio-24khz-48kbitrate-mono-mp3"
-        );
 
         res.setHeader('Content-Type', 'audio/mpeg');
         res.send(audioBuffer);
 
     } catch (error: any) {
-        console.error("Error:", error);
+        console.error("合成错误:", error);
         res.status(500).json({
             error: {
                 message: error.message,
